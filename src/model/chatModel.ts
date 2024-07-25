@@ -8,6 +8,8 @@ const chatSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now }
 });
 
+chatSchema.index({ serverId: 1, channelId: 1, timestamp: -1 }); // Compound index
+
 const Chat = mongoose.model('Chat', chatSchema);
 
 export default Chat
