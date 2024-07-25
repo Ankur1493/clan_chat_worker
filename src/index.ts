@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import WebSocket, { WebSocketServer } from 'ws';
 import mongoose from 'mongoose';
+import Chat from './model/chatModel';
 
 dotenv.config();
 
@@ -27,6 +28,29 @@ mongoose.connect(MONGO_URI)
       ws.on('error', console.error);
 
       ws.on('message', function message(data, isBinary) {
+        const message = JSON.parse(data.toString());
+
+        if (!message.content || !message.userId || !message.username || !message.serverId || !message.channelId) {
+          console.error('Invalid message format');
+          return;
+        }
+
+        const storePersistentMessage = async () => {
+          try {
+            const chatMessage = new Chat({
+              content: message.content,
+              userId: message.userId,
+              username: message.username,
+              channelId: message.channelId,
+              serverId: message.serverId
+            });
+            await chatMessage.save();
+          } catch (err) {
+            console.error('Error saving message:', err);
+          }
+        }
+        storePersistentMessage()
+
         wss.clients.forEach(function each(client) {
           if (client.readyState === WebSocket.OPEN) {
             client.send(data, { binary: isBinary });
