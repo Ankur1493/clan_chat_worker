@@ -1,34 +1,20 @@
-import express from "express"
-import { Response } from 'express';
+import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import WebSocket, { WebSocketServer } from 'ws';
 import mongoose from 'mongoose';
-import jwt from "jsonwebtoken";
-import { PrismaClient } from '@prisma/client';
+import jwt from 'jsonwebtoken';
 import Chat from './model/chatModel';
 
 dotenv.config();
 
-const prisma = new PrismaClient();
 const PORT = process.env.PORT || 8080;
 const MONGO_URI = process.env.URI as string;
-const JWT_SECRET = process.env.JWT_SECRET as string
+const JWT_SECRET = process.env.JWT_SECRET as string;
 
 const app = express();
-const corsOptions = {
-  origin: "http://localhost:3000",
-  credentials: true,
-};
-
-app.get("/health", (_, res: Response) => {
-  res.status(200).json({
-    success: "success"
-  })
-})
-
 app.use(express.json());
-app.use(cors(corsOptions));
+app.use(cors());
 
 mongoose.connect(MONGO_URI)
   .then(() => {
@@ -40,83 +26,91 @@ mongoose.connect(MONGO_URI)
 
     const wss = new WebSocketServer({ server: httpServer });
 
-    wss.on('connection', (ws) => {
-      console.log("User connected");
+    // Store clients with their server and channel information
+    const clients = new Map();
 
+    wss.on('connection', function connection(ws) {
       ws.on('error', console.error);
-      let authenticated = false;
 
-      ws.on('message', async (data, isBinary) => {
-        try {
-          const message = JSON.parse(data.toString());
+      let authenticated: boolean = false;
+      let currentServerId: string | null = null;
+      let currentChannelId: string | null = null;
+      let currentUserId: string | null = null;
 
-          if (message.type === "auth") {
-            try {
-              const decodedToken = jwt.verify(message.token, JWT_SECRET);
-              authenticated = true;
-              console.log("User authenticated:", decodedToken);
-            } catch (err) {
-              console.error('Invalid token');
-              ws.close();
-            }
-            return;
+      ws.on('message', async function message(data, isBinary) {
+        const parsedMessage = JSON.parse(data.toString());
+
+        // Handle authentication
+        if (parsedMessage.type === "auth") {
+          try {
+            const decodedToken = jwt.verify(parsedMessage.token, JWT_SECRET) as { userId: string };
+            authenticated = true;
+            currentUserId = decodedToken.userId;
+            console.log("User authenticated:", decodedToken.userId);
+          } catch (err) {
+            console.error('Invalid token');
+            ws.close();
           }
-
-          if (!authenticated) {
-            ws.send(JSON.stringify({ error: 'You are not Authorized and donot have token' }));
-            console.error('You are not Authorized');
-            return;
-          }
-
-          if (!message.token || !message.content || !message.userId || !message.serverId || !message.channelId || !message.username) {
-            ws.send(JSON.stringify({ error: 'Invalid message format' }));
-            console.error('Invalid message format');
-            return;
-          }
-          const validatedFields = await prisma.server.findUnique({
-            where: {
-              id: message.serverId,
-            },
-            include: {
-              channels: {
-                where: {
-                  id: message.channelId,
-                },
-              },
-              members: {
-                where: {
-                  userId: message.userId,
-                },
-              },
-            },
-          });
-
-          if (!validatedFields || validatedFields.channels.length === 0 || validatedFields.members.length === 0) {
-            ws.send(JSON.stringify({ error: 'fields are not proper' }));
-            console.error('Fields are not proper');
-            return;
-          }
-
-          const chatMessage = new Chat({
-            content: message.content,
-            userId: message.userId,
-            username: message.username,
-            channelId: message.channelId,
-            serverId: message.serverId,
-          });
-
-          await chatMessage.save();
-
-
-          wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(data, { binary: isBinary });
-            }
-          });
-        } catch (err) {
-          console.error('Error processing message:', err);
-          ws.send(JSON.stringify({ error: err }));
+          return;
         }
+
+        if (!authenticated) {
+          console.error('Unauthenticated message');
+          ws.close();
+          return;
+        }
+
+        // Handle join message to store server and channel ID
+        if (parsedMessage.type === "join") {
+          currentServerId = parsedMessage.serverId;
+          currentChannelId = parsedMessage.channelId;
+          clients.set(ws, { serverId: currentServerId, channelId: currentChannelId });
+          return;
+        }
+
+        // Validate message format
+        if (!parsedMessage.content || !parsedMessage.userId || !parsedMessage.username || !parsedMessage.serverId || !parsedMessage.channelId) {
+          console.error('Invalid message format');
+          return;
+        }
+
+        // Verify user ID matches the one in the token
+        if (parsedMessage.userId !== currentUserId) {
+          console.error('User ID does not match token');
+          ws.close();
+          return;
+        }
+
+        //storing messages in mongodb forever
+        const storePersistentMessage = async () => {
+          try {
+            const chatMessage = new Chat({
+              content: parsedMessage.content,
+              userId: parsedMessage.userId,
+              username: parsedMessage.username,
+              channelId: parsedMessage.channelId,
+              serverId: parsedMessage.serverId
+            });
+            await chatMessage.save();
+          } catch (err) {
+            console.error('Error saving message:', err);
+          }
+        };
+        storePersistentMessage();
+
+        // Broadcast message only to clients in the same server and channel
+        wss.clients.forEach((client) => {
+          const clientInfo = clients.get(client);
+          if (client.readyState === WebSocket.OPEN && clientInfo
+            && clientInfo.serverId === parsedMessage.serverId
+            && clientInfo.channelId === parsedMessage.channelId) {
+            client.send(data, { binary: isBinary });
+          }
+        });
+      });
+
+      ws.on('close', () => {
+        clients.delete(ws);
       });
 
       ws.send('Hello! Message From Server!!');
