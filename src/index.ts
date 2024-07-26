@@ -1,18 +1,32 @@
-import express from 'express';
+import express from "express"
+import { Response } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import WebSocket, { WebSocketServer } from 'ws';
 import mongoose from 'mongoose';
+import { PrismaClient } from '@prisma/client';
 import Chat from './model/chatModel';
 
 dotenv.config();
 
+const prisma = new PrismaClient();
 const PORT = process.env.PORT || 8080;
 const MONGO_URI = process.env.URI as string;
 
 const app = express();
+const corsOptions = {
+  origin: "http://localhost:3000",
+  credentials: true,
+};
+
+app.get("/health", (_, res: Response) => {
+  res.status(200).json({
+    success: "success"
+  })
+})
+
 app.use(express.json());
-app.use(cors());
+app.use(cors(corsOptions));
 
 mongoose.connect(MONGO_URI)
   .then(() => {
@@ -24,38 +38,64 @@ mongoose.connect(MONGO_URI)
 
     const wss = new WebSocketServer({ server: httpServer });
 
-    wss.on('connection', function connection(ws) {
+    wss.on('connection', (ws) => {
+      console.log("User connected");
+
       ws.on('error', console.error);
 
-      ws.on('message', function message(data, isBinary) {
-        const message = JSON.parse(data.toString());
+      ws.on('message', async (data, isBinary) => {
+        try {
+          const message = JSON.parse(data.toString());
 
-        if (!message.content || !message.userId || !message.username || !message.serverId || !message.channelId) {
-          console.error('Invalid message format');
-          return;
-        }
-
-        const storePersistentMessage = async () => {
-          try {
-            const chatMessage = new Chat({
-              content: message.content,
-              userId: message.userId,
-              username: message.username,
-              channelId: message.channelId,
-              serverId: message.serverId
-            });
-            await chatMessage.save();
-          } catch (err) {
-            console.error('Error saving message:', err);
+          if (!message.content || !message.userId || !message.serverId || !message.channelId || !message.username) {
+            ws.send(JSON.stringify({ error: 'Invalid message format' }));
+            console.error('Invalid message format');
+            return;
           }
-        }
-        storePersistentMessage()
 
-        wss.clients.forEach(function each(client) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(data, { binary: isBinary });
+          const validatedFields = await prisma.server.findUnique({
+            where: {
+              id: message.serverId,
+            },
+            include: {
+              channels: {
+                where: {
+                  id: message.channelId,
+                },
+              },
+              members: {
+                where: {
+                  userId: message.userId,
+                },
+              },
+            },
+          });
+
+          if (!validatedFields || validatedFields.channels.length === 0 || validatedFields.members.length === 0) {
+            ws.send(JSON.stringify({ error: 'Fields are not proper' }));
+            console.error('You are not Authorized');
+            return;
           }
-        });
+
+          const chatMessage = new Chat({
+            content: message.content,
+            userId: message.userId,
+            username: message.username,
+            channelId: message.channelId,
+            serverId: message.serverId,
+          });
+
+          await chatMessage.save();
+
+          wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(data, { binary: isBinary });
+            }
+          });
+        } catch (err) {
+          console.error('Error processing message:', err);
+          ws.send(JSON.stringify({ error: err }));
+        }
       });
 
       ws.send('Hello! Message From Server!!');
@@ -64,6 +104,6 @@ mongoose.connect(MONGO_URI)
   })
   .catch((err) => {
     console.error('MongoDB connection error:', err);
-    process.exit(1)
+    process.exit(1);
   });
 
