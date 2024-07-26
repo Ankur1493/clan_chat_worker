@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import WebSocket, { WebSocketServer } from 'ws';
 import mongoose from 'mongoose';
+import jwt from "jsonwebtoken";
 import { PrismaClient } from '@prisma/client';
 import Chat from './model/chatModel';
 
@@ -12,6 +13,7 @@ dotenv.config();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 8080;
 const MONGO_URI = process.env.URI as string;
+const JWT_SECRET = process.env.JWT_SECRET as string
 
 const app = express();
 const corsOptions = {
@@ -42,17 +44,35 @@ mongoose.connect(MONGO_URI)
       console.log("User connected");
 
       ws.on('error', console.error);
+      let authenticated = false;
 
       ws.on('message', async (data, isBinary) => {
         try {
           const message = JSON.parse(data.toString());
 
-          if (!message.content || !message.userId || !message.serverId || !message.channelId || !message.username) {
+          if (message.type === "auth") {
+            try {
+              const decodedToken = jwt.verify(message.token, JWT_SECRET);
+              authenticated = true;
+              console.log("User authenticated:", decodedToken);
+            } catch (err) {
+              console.error('Invalid token');
+              ws.close();
+            }
+            return;
+          }
+
+          if (!authenticated) {
+            ws.send(JSON.stringify({ error: 'You are not Authorized and donot have token' }));
+            console.error('You are not Authorized');
+            return;
+          }
+
+          if (!message.token || !message.content || !message.userId || !message.serverId || !message.channelId || !message.username) {
             ws.send(JSON.stringify({ error: 'Invalid message format' }));
             console.error('Invalid message format');
             return;
           }
-
           const validatedFields = await prisma.server.findUnique({
             where: {
               id: message.serverId,
@@ -72,8 +92,8 @@ mongoose.connect(MONGO_URI)
           });
 
           if (!validatedFields || validatedFields.channels.length === 0 || validatedFields.members.length === 0) {
-            ws.send(JSON.stringify({ error: 'Fields are not proper' }));
-            console.error('You are not Authorized');
+            ws.send(JSON.stringify({ error: 'fields are not proper' }));
+            console.error('Fields are not proper');
             return;
           }
 
@@ -86,6 +106,7 @@ mongoose.connect(MONGO_URI)
           });
 
           await chatMessage.save();
+
 
           wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
