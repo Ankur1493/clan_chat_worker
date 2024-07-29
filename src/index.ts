@@ -14,7 +14,9 @@ const JWT_SECRET = process.env.JWT_SECRET as string;
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: "http://localhost:3000"
+}));
 
 mongoose.connect(MONGO_URI)
   .then(() => {
@@ -30,6 +32,7 @@ mongoose.connect(MONGO_URI)
     const clients = new Map();
 
     wss.on('connection', function connection(ws) {
+      console.log("user connected")
       ws.on('error', console.error);
 
       let authenticated: boolean = false;
@@ -111,6 +114,7 @@ mongoose.connect(MONGO_URI)
 
       ws.on('close', () => {
         clients.delete(ws);
+        console.log("user chala gya")
       });
 
       ws.send('Hello! Message From Server!!');
@@ -121,4 +125,3 @@ mongoose.connect(MONGO_URI)
     console.error('MongoDB connection error:', err);
     process.exit(1);
   });
-
