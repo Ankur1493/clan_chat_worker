@@ -44,17 +44,14 @@ mongoose.connect(MONGO_URI)
         const parsedMessage = JSON.parse(data.toString());
 
         // Handle authentication
-        if (parsedMessage.type === "auth") {
-          try {
-            const decodedToken = jwt.verify(parsedMessage.token, JWT_SECRET) as { userId: string };
-            authenticated = true;
-            currentUserId = decodedToken.userId;
-            console.log("User authenticated:", decodedToken.userId);
-          } catch (err) {
-            console.error('Invalid token');
-            ws.close();
-          }
-          return;
+        try {
+          const decodedToken = jwt.verify(parsedMessage.token, JWT_SECRET) as { sub: string };
+          console.log(decodedToken?.sub)
+          authenticated = true;
+          currentUserId = decodedToken.sub;
+        } catch (err) {
+          console.error('Invalid token');
+          ws.close();
         }
 
         if (!authenticated) {
