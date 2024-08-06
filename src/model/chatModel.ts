@@ -2,13 +2,14 @@ import mongoose from "mongoose";
 
 const chatSchema = new mongoose.Schema({
   content: { type: String, required: true },
-  userId: { type: String, required: true }, // user ID from PostgreSQL
-  channelId: { type: String, required: true }, // channel ID from PostgreSQL
-  serverId: { type: String, required: true }, // server ID from PostgreSQL
+  userId: { type: String, required: true },
+  username: { type: String, required: true },
+  channelId: { type: String, required: true },
+  serverId: { type: String, required: true },
   timestamp: { type: Date, default: Date.now }
 });
 
-chatSchema.index({ serverId: 1, channelId: 1, timestamp: -1 }); // Compound index
+chatSchema.index({ serverId: 1, channelId: 1, timestamp: -1 });
 
 const Chat = mongoose.model('Chat', chatSchema);
 
