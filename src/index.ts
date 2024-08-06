@@ -28,9 +28,6 @@ mongoose.connect(MONGO_URI)
 
     const wss = new WebSocketServer({ server: httpServer });
 
-    // Store clients with their server and channel information
-    const clients = new Map();
-
     wss.on('connection', function connection(ws) {
       console.log("user connected")
       ws.on('error', console.error);
@@ -46,7 +43,6 @@ mongoose.connect(MONGO_URI)
         // Handle authentication
         try {
           const decodedToken = jwt.verify(parsedMessage.token, JWT_SECRET) as { sub: string };
-          console.log(decodedToken?.sub)
           authenticated = true;
           currentUserId = decodedToken.sub;
         } catch (err) {
@@ -64,7 +60,7 @@ mongoose.connect(MONGO_URI)
         if (parsedMessage.type === "join") {
           currentServerId = parsedMessage.serverId;
           currentChannelId = parsedMessage.channelId;
-          clients.set(ws, { serverId: currentServerId, channelId: currentChannelId });
+          console.log("server joined")
           return;
         }
 
@@ -99,18 +95,26 @@ mongoose.connect(MONGO_URI)
         storePersistentMessage();
 
         // Broadcast message only to clients in the same server and channel
+
         wss.clients.forEach((client) => {
-          const clientInfo = clients.get(client);
-          if (client.readyState === WebSocket.OPEN && clientInfo
-            && clientInfo.serverId === parsedMessage.serverId
-            && clientInfo.channelId === parsedMessage.channelId) {
-            client.send(data, { binary: isBinary });
+          console.log("trying sending")
+          if (client.readyState === WebSocket.OPEN
+            && currentServerId === parsedMessage.serverId
+            && currentChannelId === parsedMessage.channelId) {
+            client.send(JSON.stringify({
+              content: parsedMessage.content,
+              userId: parsedMessage.userId,
+              username: parsedMessage.username,
+              serverId: parsedMessage.serverId,
+              channelId: parsedMessage.channelId
+            }), { binary: isBinary });
+            console.log("message send")
           }
         });
+
       });
 
       ws.on('close', () => {
-        clients.delete(ws);
         console.log("user chala gya")
       });
 
