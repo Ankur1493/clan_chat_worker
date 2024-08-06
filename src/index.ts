@@ -97,7 +97,6 @@ mongoose.connect(MONGO_URI)
         // Broadcast message only to clients in the same server and channel
 
         wss.clients.forEach((client) => {
-          console.log("trying sending")
           if (client.readyState === WebSocket.OPEN
             && currentServerId === parsedMessage.serverId
             && currentChannelId === parsedMessage.channelId) {
@@ -106,9 +105,9 @@ mongoose.connect(MONGO_URI)
               userId: parsedMessage.userId,
               username: parsedMessage.username,
               serverId: parsedMessage.serverId,
-              channelId: parsedMessage.channelId
+              channelId: parsedMessage.channelId,
+              timestamp: Date.now()
             }), { binary: isBinary });
-            console.log("message send")
           }
         });
 
