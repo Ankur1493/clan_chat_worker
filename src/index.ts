@@ -5,12 +5,23 @@ import WebSocket, { WebSocketServer } from 'ws';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
 import Chat from './model/chatModel';
+import { Redis } from 'ioredis';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 8080;
 const MONGO_URI = process.env.URI as string;
 const JWT_SECRET = process.env.JWT_SECRET as string;
+const REDIS_URI = process.env.REDIS_URI as string;
+
+const redisPublisher = new Redis(REDIS_URI);
+const redisSubscriber = new Redis(REDIS_URI);
+redisPublisher.on('error', (err) => {
+  console.error('Redis publisher error:', err);
+});
+redisSubscriber.on('error', (err) => {
+  console.error('Redis subscribe error:', err);
+});
 
 const app = express();
 app.use(express.json());
@@ -37,7 +48,7 @@ mongoose.connect(MONGO_URI)
       let currentChannelId: string | null = null;
       let currentUserId: string | null = null;
 
-      ws.on('message', async function message(data, isBinary) {
+      ws.on('message', async function message(data) {
         const parsedMessage = JSON.parse(data.toString());
 
         // Handle authentication
@@ -94,23 +105,10 @@ mongoose.connect(MONGO_URI)
         };
         storePersistentMessage();
 
-        // Broadcast message only to clients in the same server and channel
-
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN
-            && currentServerId === parsedMessage.serverId
-            && currentChannelId === parsedMessage.channelId) {
-            client.send(JSON.stringify({
-              content: parsedMessage.content,
-              userId: parsedMessage.userId,
-              username: parsedMessage.username,
-              serverId: parsedMessage.serverId,
-              channelId: parsedMessage.channelId,
-              timestamp: Date.now()
-            }), { binary: isBinary });
-          }
-        });
-
+        const publishMessage = () => {
+          redisPublisher.publish('chat', JSON.stringify(parsedMessage));
+        };
+        publishMessage();
       });
 
       ws.on('close', () => {
@@ -118,6 +116,26 @@ mongoose.connect(MONGO_URI)
       });
 
       ws.send('Hello! Message From Server!!');
+    });
+    redisSubscriber.subscribe("chat")
+    redisSubscriber.on('message', (channel, message) => {
+      if (channel === 'chat') {
+        const parsedMessage = JSON.parse(message);
+
+        // Broadcast message only to clients in the same server and channel
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({
+              content: parsedMessage.content,
+              userId: parsedMessage.userId,
+              username: parsedMessage.username,
+              serverId: parsedMessage.serverId,
+              channelId: parsedMessage.channelId,
+              timestamp: Date.now()
+            }));
+          }
+        });
+      }
     });
 
   })
