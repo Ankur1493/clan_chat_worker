@@ -39,16 +39,18 @@ mongoose.connect(MONGO_URI)
 
     const wss = new WebSocketServer({ server: httpServer });
 
+    // Map to track connections by serverId and channelId
+    const connectionsMap: Map<string, Map<string, Set<WebSocket>>> = new Map();
+
     wss.on('connection', function connection(ws) {
-      console.log("user connected")
-      ws.on('error', console.error);
+      console.log("user connected");
 
       let authenticated: boolean = false;
       let currentServerId: string | null = null;
       let currentChannelId: string | null = null;
       let currentUserId: string | null = null;
 
-      ws.on('message', async function message(data, isBinary) {
+      ws.on('message', async function message(data) {
         const parsedMessage = JSON.parse(data.toString());
 
         // Handle authentication
@@ -71,7 +73,24 @@ mongoose.connect(MONGO_URI)
         if (parsedMessage.type === "join") {
           currentServerId = parsedMessage.serverId;
           currentChannelId = parsedMessage.channelId;
-          console.log("server joined")
+
+          if (!currentServerId || !currentChannelId) {
+            console.error('Invalid serverId or channelId');
+            ws.close();
+            return;
+          }
+
+          // Update connections map
+          if (!connectionsMap.has(currentServerId)) {
+            connectionsMap.set(currentServerId, new Map());
+          }
+          const channelMap = connectionsMap.get(currentServerId)!;
+          if (!channelMap.has(currentChannelId)) {
+            channelMap.set(currentChannelId, new Set());
+          }
+          channelMap.get(currentChannelId)!.add(ws);
+
+          console.log("server joined");
           return;
         }
 
@@ -105,30 +124,59 @@ mongoose.connect(MONGO_URI)
         };
         storePersistentMessage();
 
-        // Broadcast message only to clients in the same server and channel
-
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN
-            && currentServerId === parsedMessage.serverId
-            && currentChannelId === parsedMessage.channelId) {
-            client.send(JSON.stringify({
-              content: parsedMessage.content,
-              userId: parsedMessage.userId,
-              username: parsedMessage.username,
-              serverId: parsedMessage.serverId,
-              channelId: parsedMessage.channelId,
-              timestamp: Date.now()
-            }), { binary: isBinary });
-          }
-        });
-
+        const publishMessage = () => {
+          redisPublisher.publish('chat', JSON.stringify(parsedMessage));
+        };
+        publishMessage();
       });
 
       ws.on('close', () => {
-        console.log("user chala gya")
+        console.log("user disconnected");
+
+        // Remove from connections map
+        connectionsMap.forEach((channelMap, serverId) => {
+          channelMap.forEach((wsSet, channelId) => {
+            wsSet.delete(ws);
+            if (wsSet.size === 0) {
+              channelMap.delete(channelId);
+            }
+          });
+          if (channelMap.size === 0) {
+            connectionsMap.delete(serverId);
+          }
+        });
       });
 
       ws.send('Hello! Message From Server!!');
+    });
+
+    redisSubscriber.subscribe("chat");
+    redisSubscriber.on('message', (channel, message) => {
+      if (channel === 'chat') {
+        const parsedMessage = JSON.parse(message);
+
+        const serverId = parsedMessage.serverId;
+        const channelId = parsedMessage.channelId;
+
+        if (connectionsMap.has(serverId)) {
+          const channelMap = connectionsMap.get(serverId)!;
+          if (channelMap.has(channelId)) {
+            const clients = channelMap.get(channelId)!;
+            clients.forEach((client) => {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                  content: parsedMessage.content,
+                  userId: parsedMessage.userId,
+                  username: parsedMessage.username,
+                  serverId: parsedMessage.serverId,
+                  channelId: parsedMessage.channelId,
+                  timestamp: Date.now()
+                }));
+              }
+            });
+          }
+        }
+      }
     });
 
   })
@@ -136,3 +184,4 @@ mongoose.connect(MONGO_URI)
     console.error('MongoDB connection error:', err);
     process.exit(1);
   });
+
