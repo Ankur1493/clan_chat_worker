@@ -48,7 +48,7 @@ mongoose.connect(MONGO_URI)
       let currentChannelId: string | null = null;
       let currentUserId: string | null = null;
 
-      ws.on('message', async function message(data) {
+      ws.on('message', async function message(data, isBinary) {
         const parsedMessage = JSON.parse(data.toString());
 
         // Handle authentication
@@ -105,26 +105,12 @@ mongoose.connect(MONGO_URI)
         };
         storePersistentMessage();
 
-        const publishMessage = () => {
-          redisPublisher.publish('chat', JSON.stringify(parsedMessage));
-        };
-        publishMessage();
-      });
-
-      ws.on('close', () => {
-        console.log("user chala gya")
-      });
-
-      ws.send('Hello! Message From Server!!');
-    });
-    redisSubscriber.subscribe("chat")
-    redisSubscriber.on('message', (channel, message) => {
-      if (channel === 'chat') {
-        const parsedMessage = JSON.parse(message);
-
         // Broadcast message only to clients in the same server and channel
+
         wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
+          if (client.readyState === WebSocket.OPEN
+            && currentServerId === parsedMessage.serverId
+            && currentChannelId === parsedMessage.channelId) {
             client.send(JSON.stringify({
               content: parsedMessage.content,
               userId: parsedMessage.userId,
@@ -132,10 +118,17 @@ mongoose.connect(MONGO_URI)
               serverId: parsedMessage.serverId,
               channelId: parsedMessage.channelId,
               timestamp: Date.now()
-            }));
+            }), { binary: isBinary });
           }
         });
-      }
+
+      });
+
+      ws.on('close', () => {
+        console.log("user chala gya")
+      });
+
+      ws.send('Hello! Message From Server!!');
     });
 
   })
