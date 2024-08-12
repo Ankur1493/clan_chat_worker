@@ -1,0 +1,1 @@
+This is a web-socket server, it's a secondary server created specifically for messages management sharing them accross all the users. Clan chat client sends message here, and then we share it from our end to other users
